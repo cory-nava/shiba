@@ -1,0 +1,591 @@
+openapi: 3.0.3
+info:
+  title: SHIBA - State Benefits Application API
+  description: |
+    API documentation for the State Hosted Integrated Benefits Application (SHIBA).
+    Currently implemented for Minnesota, designed for multi-state adaptation.
+  version: 1.0.0
+  contact:
+    name: Code for America
+    url: https://www.codeforamerica.org
+
+servers:
+  - url: https://mnbenefits.mn.gov
+    description: Minnesota Production
+  - url: https://demo.mnbenefits.mn.gov
+    description: Minnesota Demo
+  - url: http://localhost:8080
+    description: Local Development
+
+tags:
+  - name: Application Flow
+    description: Main application submission workflow
+  - name: File Upload
+    description: Document upload and management
+  - name: Admin
+    description: Administrative endpoints (restricted access)
+  - name: Health
+    description: Health check and monitoring
+
+paths:
+  /:
+    get:
+      summary: Landing page
+      tags: [Application Flow]
+      responses:
+        '200':
+          description: HTML landing page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /pages/{pageName}:
+    get:
+      summary: Display form page
+      tags: [Application Flow]
+      parameters:
+        - name: pageName
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the form page to display
+          example: personalInfo
+      responses:
+        '200':
+          description: HTML form page
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect (e.g., session expired, page not in flow)
+        '404':
+          description: Page not found
+
+    post:
+      summary: Submit form page
+      tags: [Application Flow]
+      parameters:
+        - name: pageName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Form data varies by page
+      responses:
+        '302':
+          description: Redirect to next page
+        '200':
+          description: Page redisplayed with validation errors
+
+  /pages/{pageName}/uploadFile:
+    post:
+      summary: Upload document
+      tags: [File Upload]
+      parameters:
+        - name: pageName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload (PDF, JPG, PNG, max 10MB)
+                dataURL:
+                  type: string
+                  description: Base64-encoded image (for camera captures)
+                thumbDataURL:
+                  type: string
+                  description: Base64-encoded thumbnail
+                doc_type:
+                  type: string
+                  enum: [PROOF_OF_INCOME, PROOF_OF_HOUSING, PROOF_OF_IDENTITY, OTHER]
+      responses:
+        '200':
+          description: Upload successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  filename:
+                    type: string
+        '400':
+          description: Invalid file (too large, wrong type, etc.)
+
+  /pages/{pageName}/deleteFile:
+    delete:
+      summary: Delete uploaded document
+      tags: [File Upload]
+      parameters:
+        - name: pageName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+      responses:
+        '200':
+          description: File deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /submit:
+    post:
+      summary: Submit application
+      tags: [Application Flow]
+      description: |
+        Final application submission. Triggers:
+        - Application saved to database
+        - PDF generation (CAF, CCAP, etc.)
+        - Document submission to state system
+        - Confirmation email sent
+      responses:
+        '302':
+          description: Redirect to confirmation page
+        '500':
+          description: Submission failed
+
+  /confirmation/{applicationId}:
+    get:
+      summary: Confirmation page
+      tags: [Application Flow]
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: HTML confirmation page
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /download/{applicationId}:
+    get:
+      summary: Download application PDF
+      tags: [Application Flow]
+      security:
+        - sessionAuth: []
+        - adminAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [CAF, CCAP, UPLOADED_DOCS]
+            default: CAF
+      responses:
+        '200':
+          description: PDF document
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
+        '404':
+          description: Application not found
+
+  /submit-feedback:
+    post:
+      summary: Submit feedback
+      tags: [Application Flow]
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                sentiment:
+                  type: string
+                  enum: [HAPPY, MEH, SAD]
+                feedback:
+                  type: string
+      responses:
+        '302':
+          description: Redirect after feedback submission
+
+  /resend-confirmation-email/{applicationId}:
+    post:
+      summary: Resend confirmation email
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Email resent successfully
+        '403':
+          description: Forbidden (admin access required)
+
+  /resend-next-steps-email/{applicationId}:
+    post:
+      summary: Resend next steps email
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Email resent successfully
+        '403':
+          description: Forbidden
+
+  /download-caf/{applicationId}:
+    get:
+      summary: Download CAF PDF (admin)
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: CAF PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /download-ccap/{applicationId}:
+    get:
+      summary: Download CCAP PDF (admin)
+      tags: [Admin]
+      security:
+        - adminAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: CCAP PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /oauth2/authorization/google:
+    get:
+      summary: Google OAuth login
+      tags: [Authentication]
+      responses:
+        '302':
+          description: Redirect to Google login
+
+  /oauth2/authorization/azure-active-directory:
+    get:
+      summary: Azure AD OAuth login
+      tags: [Authentication]
+      responses:
+        '302':
+          description: Redirect to Azure AD login
+
+  /actuator/health:
+    get:
+      summary: Health check
+      tags: [Health]
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [UP, DOWN]
+                  components:
+                    type: object
+
+components:
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: SESSION
+      description: Session-based authentication
+
+    adminAuth:
+      type: http
+      scheme: bearer
+      description: Admin access via OAuth2
+
+  schemas:
+    ApplicationData:
+      type: object
+      description: Complete application data stored as encrypted JSONB
+      properties:
+        pagesData:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              fieldName:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      type: string
+                  type:
+                    type: string
+                    enum: [SINGLE_VALUE, MULTI_VALUE, DATE, PHONE, SSN]
+        subworkflows:
+          type: object
+          properties:
+            household:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubworkflowIteration'
+            jobs:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubworkflowIteration'
+            income:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubworkflowIteration'
+        uploadedDocs:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadedDocument'
+        expeditedEligibility:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ELIGIBLE, UNDETERMINED, NOT_ELIGIBLE]
+        startTimeOnce:
+          type: string
+          format: date-time
+        flow:
+          type: string
+          enum: [FULL, LATER_DOCS, MINIMUM]
+
+    SubworkflowIteration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        complete:
+          type: boolean
+        pages:
+          type: object
+          additionalProperties:
+            type: object
+
+    UploadedDocument:
+      type: object
+      properties:
+        filename:
+          type: string
+        doc_type:
+          type: string
+        size:
+          type: integer
+        uploadedAt:
+          type: string
+          format: date-time
+
+    Application:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        completedAt:
+          type: string
+          format: date-time
+        county:
+          type: string
+          description: Minnesota county code
+        flow:
+          type: string
+          enum: [FULL, LATER_DOCS, MINIMUM]
+        timeToComplete:
+          type: integer
+          description: Time in seconds
+        sentiment:
+          type: string
+          enum: [HAPPY, MEH, SAD]
+        feedback:
+          type: string
+        applicationData:
+          $ref: '#/components/schemas/ApplicationData'
+
+    ApplicationStatus:
+      type: object
+      properties:
+        applicationId:
+          type: string
+          format: uuid
+        documentType:
+          type: string
+          enum: [CAF, CCAP, XML, UPLOADED_DOC, CERTAIN_POPS]
+        routingDestination:
+          type: string
+        status:
+          type: string
+          enum: [SENDING, DELIVERED, DELIVERY_FAILED, RESUBMISSION_FAILED]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    County:
+      type: string
+      enum:
+        - Aitkin
+        - Anoka
+        - Becker
+        - Beltrami
+        - Benton
+        - BigStone
+        - BlueEarth
+        - Brown
+        - Carlton
+        - Carver
+        - Cass
+        - Chippewa
+        - Chisago
+        - Clay
+        - Clearwater
+        - Cook
+        - Cottonwood
+        - CrowWing
+        - Dakota
+        - Dodge
+        - Douglas
+        - Faribault
+        - Fillmore
+        - Freeborn
+        - Goodhue
+        - Grant
+        - Hennepin
+        - Houston
+        - Hubbard
+        - Isanti
+        - Itasca
+        - Jackson
+        - Kanabec
+        - Kandiyohi
+        - Kittson
+        - Koochiching
+        - LacQuiParle
+        - Lake
+        - LakeOfTheWoods
+        - LeSueur
+        - Lincoln
+        - Lyon
+        - Mahnomen
+        - Marshall
+        - Martin
+        - McLeod
+        - Meeker
+        - MilleLacs
+        - Morrison
+        - Mower
+        - Murray
+        - Nicollet
+        - Nobles
+        - Norman
+        - Olmsted
+        - OtterTail
+        - Pennington
+        - Pine
+        - Pipestone
+        - Polk
+        - Pope
+        - Ramsey
+        - RedLake
+        - Redwood
+        - Renville
+        - Rice
+        - Rock
+        - Roseau
+        - Scott
+        - Sherburne
+        - Sibley
+        - Stearns
+        - Steele
+        - Stevens
+        - StLouis
+        - Swift
+        - Todd
+        - Traverse
+        - Wabasha
+        - Wadena
+        - Waseca
+        - Washington
+        - Watonwan
+        - Wilkin
+        - Winona
+        - Wright
+        - YellowMedicine
