@@ -1,0 +1,120 @@
+name: Terraform Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+      action:
+        description: 'Terraform action'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  TF_VERSION: 1.5.0
+  AWS_REGION: us-east-1
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.action }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create placeholder Lambda package
+        run: |
+          mkdir -p placeholder
+          echo "This is a placeholder Lambda package" > placeholder/README.txt
+          cd placeholder && zip ../placeholder-lambda.zip README.txt
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=shiba-terraform-state" \
+            -backend-config="key=shiba-${{ github.event.inputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -out=tfplan
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tfplan-${{ github.event.inputs.environment }}
+          path: infrastructure/terraform/tfplan
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        run: |
+          terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          terraform destroy \
+            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -auto-approve
+
+      - name: Output Terraform values
+        if: github.event.inputs.action == 'apply'
+        run: |
+          terraform output -json > terraform-outputs.json
+          cat terraform-outputs.json
+
+      - name: Upload outputs
+        if: github.event.inputs.action == 'apply'
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-outputs-${{ github.event.inputs.environment }}
+          path: infrastructure/terraform/terraform-outputs.json
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const output = `#### Terraform ${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });

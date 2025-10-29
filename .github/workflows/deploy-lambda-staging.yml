@@ -1,0 +1,167 @@
+name: Deploy to AWS Lambda (Staging)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: staging
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-suite:
+          - unitTest
+          - dbTest
+          - fullFlowJourneyTest
+          - minimumFlowJourneyTest
+          - documentUploadJourneyTest
+          - laterDocsJourneyTest
+          - frameworkTest
+          - pdfTest
+          - ccapTest
+          - validationTest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Create test environment file
+        run: |
+          cat > .env.test << 'EOF'
+          SPRING_PROFILES_ACTIVE=test
+          DATABASE_URL=jdbc:postgresql://localhost:5432/shiba_test
+          EOF
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name postgres \
+            -e POSTGRES_DB=shiba_test \
+            -e POSTGRES_USER=shiba_test \
+            -e POSTGRES_PASSWORD=test_password \
+            -p 5432:5432 \
+            postgres:15
+
+      - name: Wait for PostgreSQL
+        run: |
+          until docker exec postgres pg_isready -U shiba_test; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
+      - name: Run ${{ matrix.test-suite }}
+        run: ./gradlew ${{ matrix.test-suite }} --no-daemon
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.test-suite }}
+          path: build/test-results/**/*.xml
+
+  build-and-deploy:
+    name: Build and Deploy Lambda
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build Lambda package
+        run: |
+          ./gradlew clean buildLambda --no-daemon
+
+      - name: Get Lambda package path
+        id: lambda-package
+        run: |
+          PACKAGE_PATH=$(find build/distributions -name "shiba-lambda-*.zip" | head -1)
+          echo "path=$PACKAGE_PATH" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --zip-file fileb://${{ steps.lambda-package.outputs.path }} \
+            --publish
+
+      - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name shiba-${{ env.ENVIRONMENT }}
+
+      - name: Update Lambda alias
+        run: |
+          LATEST_VERSION=$(aws lambda publish-version \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --query 'Version' --output text)
+
+          aws lambda update-alias \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --name live \
+            --function-version $LATEST_VERSION
+
+      - name: Upload static assets to S3
+        run: |
+          aws s3 sync src/main/resources/static \
+            s3://shiba-${{ env.ENVIRONMENT }}-static-assets/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='SHIBA ${{ env.ENVIRONMENT }} - Lambda + S3'].Id" \
+            --output text)
+
+          if [ ! -z "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/assets/*" "/*.css" "/*.js"
+          fi
+
+      - name: Run smoke tests
+        run: |
+          CLOUDFRONT_DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='SHIBA ${{ env.ENVIRONMENT }} - Lambda + S3'].DomainName" \
+            --output text)
+
+          echo "Testing CloudFront domain: $CLOUDFRONT_DOMAIN"
+          curl -f -s -o /dev/null -w "%{http_code}" https://$CLOUDFRONT_DOMAIN/ || exit 1
+          echo "Smoke test passed!"
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment to staging successful"
+          else
+            echo "❌ Deployment to staging failed"
+            exit 1
+          fi

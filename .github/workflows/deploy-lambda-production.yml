@@ -1,0 +1,233 @@
+name: Deploy to AWS Lambda (Production)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm-production:
+        description: 'Type "deploy-to-production" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: production
+
+jobs:
+  validate-input:
+    name: Validate Production Deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm production deployment
+        if: github.event.inputs.confirm-production != 'deploy-to-production'
+        run: |
+          echo "❌ Production deployment not confirmed"
+          echo "Please type 'deploy-to-production' to confirm"
+          exit 1
+
+  test:
+    name: Run Tests
+    needs: validate-input
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-suite:
+          - unitTest
+          - dbTest
+          - fullFlowJourneyTest
+          - minimumFlowJourneyTest
+          - documentUploadJourneyTest
+          - laterDocsJourneyTest
+          - frameworkTest
+          - pdfTest
+          - ccapTest
+          - validationTest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Create test environment file
+        run: |
+          cat > .env.test << 'EOF'
+          SPRING_PROFILES_ACTIVE=test
+          DATABASE_URL=jdbc:postgresql://localhost:5432/shiba_test
+          EOF
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d \
+            --name postgres \
+            -e POSTGRES_DB=shiba_test \
+            -e POSTGRES_USER=shiba_test \
+            -e POSTGRES_PASSWORD=test_password \
+            -p 5432:5432 \
+            postgres:15
+
+      - name: Wait for PostgreSQL
+        run: |
+          until docker exec postgres pg_isready -U shiba_test; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
+      - name: Run ${{ matrix.test-suite }}
+        run: ./gradlew ${{ matrix.test-suite }} --no-daemon
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.test-suite }}
+          path: build/test-results/**/*.xml
+
+  build-and-deploy:
+    name: Build and Deploy Lambda
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://apply.mnbenefits.org
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build Lambda package
+        run: |
+          ./gradlew clean buildLambda --no-daemon
+
+      - name: Get Lambda package path
+        id: lambda-package
+        run: |
+          PACKAGE_PATH=$(find build/distributions -name "shiba-lambda-*.zip" | head -1)
+          echo "path=$PACKAGE_PATH" >> $GITHUB_OUTPUT
+
+      - name: Create backup of current Lambda version
+        run: |
+          CURRENT_VERSION=$(aws lambda get-alias \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --name live \
+            --query 'FunctionVersion' --output text)
+
+          echo "Current production version: $CURRENT_VERSION"
+          echo "BACKUP_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
+
+      - name: Deploy to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --zip-file fileb://${{ steps.lambda-package.outputs.path }} \
+            --publish
+
+      - name: Wait for Lambda update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name shiba-${{ env.ENVIRONMENT }}
+
+      - name: Publish new Lambda version
+        id: publish-version
+        run: |
+          NEW_VERSION=$(aws lambda publish-version \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --query 'Version' --output text)
+
+          echo "New version: $NEW_VERSION"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update Lambda alias to new version
+        run: |
+          aws lambda update-alias \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --name live \
+            --function-version ${{ steps.publish-version.outputs.version }}
+
+      - name: Upload static assets to S3
+        run: |
+          aws s3 sync src/main/resources/static \
+            s3://shiba-${{ env.ENVIRONMENT }}-static-assets/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DISTRIBUTION_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='SHIBA ${{ env.ENVIRONMENT }} - Lambda + S3'].Id" \
+            --output text)
+
+          if [ ! -z "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/assets/*" "/*.css" "/*.js"
+          fi
+
+      - name: Run smoke tests
+        id: smoke-tests
+        run: |
+          DOMAIN="apply.mnbenefits.org"
+          echo "Testing production domain: $DOMAIN"
+
+          # Test home page
+          HTTP_CODE=$(curl -f -s -o /dev/null -w "%{http_code}" https://$DOMAIN/)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Home page test failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+          # Test health endpoint
+          HTTP_CODE=$(curl -f -s -o /dev/null -w "%{http_code}" https://$DOMAIN/actuator/health)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Health check failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "✅ Smoke tests passed!"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "⚠️ Deployment failed, rolling back to version ${{ env.BACKUP_VERSION }}"
+
+          aws lambda update-alias \
+            --function-name shiba-${{ env.ENVIRONMENT }} \
+            --name live \
+            --function-version ${{ env.BACKUP_VERSION }}
+
+          echo "✅ Rolled back to previous version"
+          exit 1
+
+      - name: Create deployment tag
+        if: success()
+        run: |
+          git tag -a "production-$(date +%Y%m%d-%H%M%S)" \
+            -m "Production deployment - Lambda version ${{ steps.publish-version.outputs.version }}"
+          git push origin --tags
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Production deployment successful"
+            echo "Lambda version: ${{ steps.publish-version.outputs.version }}"
+          else
+            echo "❌ Production deployment failed"
+            exit 1
+          fi

@@ -88,6 +88,18 @@ dependencies {
             'org.glassfish.jaxb:jaxb-jxc'
     )
 
+    // AWS Lambda dependencies
+    implementation("com.amazonaws:aws-lambda-java-core:1.2.2")
+    implementation("com.amazonaws:aws-lambda-java-events:3.11.1")
+    implementation("org.springframework.cloud:spring-cloud-function-adapter-aws:3.2.5")
+
+    // AWS SDK for S3, Secrets Manager, etc.
+    implementation platform("software.amazon.awssdk:bom:2.20.26")
+    implementation("software.amazon.awssdk:s3")
+    implementation("software.amazon.awssdk:secretsmanager")
+    implementation("software.amazon.awssdk:ses")
+    implementation("software.amazon.awssdk:cloudwatch")
+
     compileOnly("org.projectlombok:lombok")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     annotationProcessor("org.projectlombok:lombok")
@@ -294,4 +306,18 @@ licenseReport {
 
 jar {
     enabled = false
+}
+
+// Task to build Lambda deployment package
+task buildLambda(type: Zip) {
+    dependsOn build
+    archiveFileName = "shiba-lambda-${version}.zip"
+    destinationDirectory = file("$buildDir/distributions")
+
+    from(compileJava)
+    from(processResources)
+
+    into('lib') {
+        from(configurations.runtimeClasspath)
+    }
 }

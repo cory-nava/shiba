@@ -1,0 +1,139 @@
+# AWS-specific Spring Boot Configuration
+
+spring:
+  profiles:
+    active: aws
+
+  # DataSource Configuration (using Secrets Manager)
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:shiba}
+    username: ${DB_USERNAME:shiba_admin}
+    password: ${DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  # Redis Session Configuration
+  session:
+    store-type: jdbc
+    jdbc:
+      initialize-schema: never
+    timeout: 3600s  # 1 hour
+
+  # Flyway Database Migrations
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          lob:
+            non_contextual_creation: true
+
+  # Multipart file upload configuration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  # Cloud Function Configuration for Lambda
+  cloud:
+    function:
+      definition: shibaFunction
+
+# Server Configuration
+server:
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+  forward-headers-strategy: native
+
+# AWS Configuration
+cloud:
+  aws:
+    region:
+      static: ${AWS_REGION:us-east-1}
+      auto: false
+    stack:
+      auto: false
+    credentials:
+      instanceProfile: true
+
+# Application-specific configuration
+shiba:
+  # S3 Configuration
+  s3:
+    documents-bucket: ${S3_DOCUMENTS_BUCKET:shiba-documents}
+    static-assets-bucket: ${S3_STATIC_ASSETS_BUCKET:shiba-static}
+    region: ${AWS_REGION:us-east-1}
+
+  # Redis Configuration
+  redis:
+    enabled: true
+    host: ${REDIS_ENDPOINT:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    ssl: true
+    timeout: 2000
+
+  # CloudFront Configuration
+  cloudfront:
+    domain: ${CLOUDFRONT_DOMAIN:}
+    enabled: true
+
+  # Secrets Manager Configuration
+  secrets:
+    db-credentials-arn: ${DB_SECRET_ARN:}
+    application-secrets-arn: ${APPLICATION_SECRETS_ARN:}
+
+  # State-specific configuration
+  state:
+    code: ${STATE_CODE:MN}
+    name: ${STATE_NAME:Minnesota}
+
+  # Feature flags
+  features:
+    document-upload: true
+    email-notifications: true
+    sms-notifications: false
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    org.codeforamerica.shiba: INFO
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+# Actuator Configuration (for health checks)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      cloudwatch:
+        enabled: true
+        namespace: SHIBA/${spring.profiles.active}
+        batch-size: 20

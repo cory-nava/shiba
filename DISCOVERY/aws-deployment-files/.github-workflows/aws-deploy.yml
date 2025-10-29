@@ -1,0 +1,290 @@
+# Complete AWS deployment workflow for SHIBA
+# Place this file in: .github/workflows/aws-deploy.yml
+
+name: Deploy to AWS
+
+on:
+  workflow_run:
+    workflows: ["Build and Test"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests before deployment'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: shiba
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run tests
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          ./gradlew unitTest
+          ./gradlew dbTest
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set environment variables
+        run: |
+          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+          echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+          echo "ENVIRONMENT=${{ github.event.inputs.environment || 'staging' }}" >> $GITHUB_ENV
+
+      - name: Build Docker image
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest-$ENVIRONMENT
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT-$(date +%Y%m%d%H%M%S)
+
+      - name: Push image to Amazon ECR
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest-$ENVIRONMENT
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT-$(date +%Y%m%d%H%M%S)
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition shiba-$ENVIRONMENT \
+            --query taskDefinition > task-definition.json
+
+          # Remove fields that can't be used in RegisterTaskDefinition
+          cat task-definition.json | \
+            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > task-definition-clean.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition-clean.json
+          container-name: app
+          image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: shiba-${{ env.ENVIRONMENT }}
+          cluster: shiba-${{ env.ENVIRONMENT }}
+          wait-for-service-stability: true
+
+      - name: Run database migrations
+        run: |
+          # Get the task definition for migrations
+          TASK_DEF_ARN=$(aws ecs describe-task-definition \
+            --task-definition shiba-$ENVIRONMENT-migration \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          # Get VPC configuration
+          SERVICE_INFO=$(aws ecs describe-services \
+            --cluster shiba-$ENVIRONMENT \
+            --services shiba-$ENVIRONMENT \
+            --query 'services[0]')
+
+          SUBNETS=$(echo $SERVICE_INFO | jq -r '.networkConfiguration.awsvpcConfiguration.subnets | join(",")')
+          SECURITY_GROUPS=$(echo $SERVICE_INFO | jq -r '.networkConfiguration.awsvpcConfiguration.securityGroups | join(",")')
+
+          # Run migration task
+          TASK_ARN=$(aws ecs run-task \
+            --cluster shiba-$ENVIRONMENT \
+            --task-definition $TASK_DEF_ARN \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides": [{"name": "app", "command": ["./gradlew", "flywayMigrate"]}]}' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Migration task: $TASK_ARN"
+
+          # Wait for migration to complete
+          aws ecs wait tasks-stopped --cluster shiba-$ENVIRONMENT --tasks $TASK_ARN
+
+          # Check exit code
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster shiba-$ENVIRONMENT \
+            --tasks $TASK_ARN \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code: $EXIT_CODE"
+            exit 1
+          fi
+
+          echo "Migration completed successfully"
+
+      - name: Verify deployment
+        run: |
+          # Get ALB DNS name
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names shiba-$ENVIRONMENT-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          echo "Waiting for deployment to stabilize..."
+          sleep 60
+
+          # Health check
+          HEALTH_URL="https://$ALB_DNS/actuator/health"
+          echo "Checking health at: $HEALTH_URL"
+
+          MAX_RETRIES=10
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -k $HEALTH_URL; then
+              echo "Health check passed!"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT+1))
+              echo "Health check failed. Retry $RETRY_COUNT/$MAX_RETRIES..."
+              sleep 10
+            fi
+          done
+
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "Health check failed after $MAX_RETRIES attempts"
+            exit 1
+          fi
+
+      - name: Output deployment info
+        run: |
+          echo "Deployment Summary:"
+          echo "==================="
+          echo "Environment: $ENVIRONMENT"
+          echo "Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Cluster: shiba-$ENVIRONMENT"
+          echo "Service: shiba-$ENVIRONMENT"
+          echo "Region: $AWS_REGION"
+
+          # Get service details
+          aws ecs describe-services \
+            --cluster shiba-$ENVIRONMENT \
+            --services shiba-$ENVIRONMENT \
+            --query 'services[0].{RunningCount:runningCount,DesiredCount:desiredCount,Status:status}' \
+            --output table
+
+      - name: Create deployment record
+        run: |
+          # Store deployment metadata
+          cat > deployment-info.json <<EOF
+          {
+            "environment": "$ENVIRONMENT",
+            "image_tag": "$IMAGE_TAG",
+            "commit_sha": "${{ github.sha }}",
+            "commit_message": "$(git log -1 --pretty=%B)",
+            "deployed_by": "${{ github.actor }}",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "workflow_run_id": "${{ github.run_id }}"
+          }
+          EOF
+
+          # Upload to S3 for audit trail
+          aws s3 cp deployment-info.json \
+            s3://shiba-$ENVIRONMENT-deployments/deployments/$(date +%Y/%m/%d)/${{ github.sha }}.json
+
+      - name: Notify success on Slack
+        if: success()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "✅ SHIBA deployment to ${{ env.ENVIRONMENT }} succeeded!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*SHIBA Deployment Successful*\n*Environment:* ${{ env.ENVIRONMENT }}\n*Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>\n*Deployed by:* ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify failure on Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "❌ SHIBA deployment to ${{ env.ENVIRONMENT }} failed!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*SHIBA Deployment Failed*\n*Environment:* ${{ env.ENVIRONMENT }}\n*Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>\n*Workflow:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Rollback on failure
+        if: failure() && github.event.inputs.environment == 'production'
+        run: |
+          echo "Rolling back deployment..."
+
+          # Get previous task definition
+          PREVIOUS_TASK_DEF=$(aws ecs describe-services \
+            --cluster shiba-production \
+            --services shiba-production \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          # Rollback to previous version
+          aws ecs update-service \
+            --cluster shiba-production \
+            --service shiba-production \
+            --task-definition $PREVIOUS_TASK_DEF \
+            --force-new-deployment
+
+          echo "Rollback initiated to task definition: $PREVIOUS_TASK_DEF"
