@@ -109,6 +109,47 @@ Currently implemented for Minnesota with tight integration to Minnesota's state 
    - Authentication schemes
    - Data models (Application, ApplicationStatus, etc.)
 
+10. **[09-CLOUD-PROVIDER-ABSTRACTION.md](./09-CLOUD-PROVIDER-ABSTRACTION.md)**
+   - Cloud-agnostic architecture strategy
+   - Storage abstraction (AWS S3, Azure Blob, GCS, MinIO, Local)
+   - Database provider options
+   - Email service abstraction
+   - Deployment patterns for AWS, Azure, GCP, and on-premises
+   - Migration guide from Azure-specific to cloud-agnostic
+
+11. **[ARCHITECTURE-MERMAID.md](./ARCHITECTURE-MERMAID.md)**
+   - Complete system architecture in Mermaid format
+   - Current vs target architecture diagrams
+   - Multi-tenant request flow
+   - Adapter patterns
+   - Configuration hierarchy
+   - Data flow diagrams
+   - Security architecture
+   - Migration strategy
+   - Deployment options
+
+### Detailed Sub-Diagrams
+
+12. **[diagrams/01-storage-abstraction.md](./diagrams/01-storage-abstraction.md)**
+   - Storage provider selection flow
+   - Document upload/download flows
+   - Presigned URL generation
+   - Storage migration tool
+   - Cost comparison
+   - Lifecycle policies
+   - Disaster recovery
+   - Encryption at rest
+
+13. **[diagrams/02-tenant-context.md](./diagrams/02-tenant-context.md)**
+   - Tenant detection and resolution
+   - Configuration caching strategy
+   - Multi-tenant request lifecycle
+   - Database query interceptor
+   - Tenant-aware repository pattern
+   - Configuration schema
+   - Context propagation for async tasks
+   - Performance optimization
+
 ## Key Findings
 
 ### Current State (Minnesota-Specific)
@@ -135,6 +176,10 @@ Currently implemented for Minnesota with tight integration to Minnesota's state 
 - ✓ Document generation (PDFBox)
 - ✓ Accessibility compliance (WCAG 2.1 AA)
 
+**Cloud Dependencies (Current):**
+- ✗ Azure Blob Storage (hardcoded implementation)
+- → Target: Cloud-agnostic storage abstraction supporting AWS S3, Azure Blob, GCS, MinIO, and local filesystem
+
 ### Target State (Multi-State)
 
 **Architecture Vision:**
@@ -144,6 +189,7 @@ Currently implemented for Minnesota with tight integration to Minnesota's state 
 - Externalized business rules (rules engine)
 - Admin UI for non-technical configuration
 - Comprehensive onboarding documentation
+- **Cloud-agnostic design** - works on AWS, Azure, GCP, or on-premises
 
 **Deployment Models:**
 1. **Multi-tenant SaaS** - Single deployment serving multiple states
