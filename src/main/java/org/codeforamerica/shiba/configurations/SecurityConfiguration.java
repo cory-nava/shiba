@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.servlet.util.matcher.MvcRequestMatcher;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.session.InvalidSessionStrategy;
 import org.springframework.security.web.session.SessionInformationExpiredEvent;
 import org.springframework.security.web.session.SessionInformationExpiredStrategy;
@@ -52,12 +53,57 @@ public class SecurityConfiguration {
 
     http.authorizeHttpRequests(r ->
             r.requestMatchers(
-                    mvcMatcherBuilder.pattern("/download/??????????"),
-                    mvcMatcherBuilder.pattern("/resend-confirmation-email/??????????"))
+                    // Landing and static pages
+                    new AntPathRequestMatcher("/"),
+                    new AntPathRequestMatcher("/privacy"),
+                    new AntPathRequestMatcher("/faq"),
+                    // Pre-application flow pages (before personal data collection)
+                    new AntPathRequestMatcher("/pages/landing"),
+                    new AntPathRequestMatcher("/pages/landing/**"),
+                    new AntPathRequestMatcher("/pages/identifyCountyBeforeApplying"),
+                    new AntPathRequestMatcher("/pages/identifyCountyBeforeApplying/**"),
+                    new AntPathRequestMatcher("/pages/identifyZipcodeBeforeApplying"),
+                    new AntPathRequestMatcher("/pages/identifyZipcodeBeforeApplying/**"),
+                    new AntPathRequestMatcher("/pages/identifyCounty"),
+                    new AntPathRequestMatcher("/pages/identifyCounty/**"),
+                    new AntPathRequestMatcher("/pages/identifyZipcode"),
+                    new AntPathRequestMatcher("/pages/identifyZipcode/**"),
+                    new AntPathRequestMatcher("/pages/goToApplyMn"),
+                    new AntPathRequestMatcher("/pages/goToApplyMn/**"),
+                    new AntPathRequestMatcher("/pages/prepareToApply"),
+                    new AntPathRequestMatcher("/pages/prepareToApply/**"),
+                    new AntPathRequestMatcher("/pages/timeoutNotice"),
+                    new AntPathRequestMatcher("/pages/timeoutNotice/**"),
+                    new AntPathRequestMatcher("/pages/languagePreferences"),
+                    new AntPathRequestMatcher("/pages/languagePreferences/**"),
+                    new AntPathRequestMatcher("/pages/choosePrograms"),
+                    new AntPathRequestMatcher("/pages/choosePrograms/**"),
+                    new AntPathRequestMatcher("/pages/expeditedNotice"),
+                    new AntPathRequestMatcher("/pages/expeditedNotice/**"),
+                    new AntPathRequestMatcher("/pages/basicCriteria"),
+                    new AntPathRequestMatcher("/pages/basicCriteria/**"),
+                    new AntPathRequestMatcher("/pages/certainPopsConfirm"),
+                    new AntPathRequestMatcher("/pages/certainPopsConfirm/**"),
+                    new AntPathRequestMatcher("/pages/certainPopsOffboarding"),
+                    new AntPathRequestMatcher("/pages/certainPopsOffboarding/**"),
+                    // Static assets
+                    new AntPathRequestMatcher("/css/**"),
+                    new AntPathRequestMatcher("/js/**"),
+                    new AntPathRequestMatcher("/images/**"),
+                    new AntPathRequestMatcher("/assets/**"),
+                    new AntPathRequestMatcher("/fonts/**"),
+                    new AntPathRequestMatcher("/*.css"),
+                    new AntPathRequestMatcher("/*.js"),
+                    new AntPathRequestMatcher("/*.map"))
+                .permitAll()
+            .requestMatchers(
+                    new AntPathRequestMatcher("/download/??????????"),
+                    new AntPathRequestMatcher("/resend-confirmation-email/??????????"))
                 .access((authentication, context) ->
                     new org.springframework.security.authorization.AuthorizationDecision(
                         authentication.get().isAuthenticated() &&
-                        emailBasedAccessDecider().check(authentication.get()))))
+                        emailBasedAccessDecider().check(authentication.get())))
+            .anyRequest().authenticated())
         .oauth2Login(oauth2 -> {});
 
     http.headers(headers -> headers

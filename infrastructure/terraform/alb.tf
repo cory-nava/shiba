@@ -65,8 +65,9 @@ resource "aws_lb_target_group" "lambda" {
   # Lambda target groups don't use traditional health checks
   # Health check configuration is ignored for Lambda targets
 
-  # Disable multi-value headers - SpringBootLambdaContainerHandler doesn't support them properly
-  lambda_multi_value_headers_enabled = false
+  # Enable multi-value headers - SpringBootLambdaContainerHandler requires this to properly set Content-Type
+  # See: https://github.com/awslabs/aws-serverless-java-container/issues/347
+  lambda_multi_value_headers_enabled = true
 
   tags = merge(
     local.common_tags,
