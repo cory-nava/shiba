@@ -29,9 +29,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import javax.imageio.ImageIO;
-import javax.servlet.http.HttpServletResponse;
-import javax.servlet.http.HttpSession;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.Cookie;
 import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -81,7 +82,6 @@ import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.mobile.device.Device;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -122,6 +122,7 @@ public class PageController {
   private final RoutingDestinationMessageService routingDestinationMessageService;
   private final ApplicationStatusRepository applicationStatusRepository;
   private final EligibilityListBuilder listBuilder;
+  private final DeviceDetector deviceDetector;
 
   public PageController(
       ApplicationConfiguration applicationConfiguration,
@@ -143,7 +144,8 @@ public class PageController {
       ApplicationRepository applicationRepository,
       RoutingDestinationMessageService routingDestinationMessageService,
       ApplicationStatusRepository applicationStatusRepository,
-      EligibilityListBuilder listBuilder) {
+      EligibilityListBuilder listBuilder,
+      DeviceDetector deviceDetector) {
     this.applicationData = applicationData;
     this.applicationConfiguration = applicationConfiguration;
     this.clock = clock;
@@ -164,6 +166,7 @@ public class PageController {
     this.routingDestinationMessageService = routingDestinationMessageService;
     this.applicationStatusRepository = applicationStatusRepository;
     this.listBuilder = listBuilder;
+    this.deviceDetector = deviceDetector;
   }
 
   @GetMapping("/")
@@ -650,7 +653,7 @@ public class PageController {
       @RequestBody(required = false) MultiValueMap<String, String> model,
       HttpServletResponse httpResponse,
       HttpSession httpSession,
-      Device device
+      HttpServletRequest httpRequest
   ) {
     LandmarkPagesConfiguration landmarkPagesConfiguration = applicationConfiguration
         .getLandmarkPages();
@@ -670,7 +673,8 @@ public class PageController {
       }
       Application application = applicationFactory.newApplication(applicationData);
       application.setCompletedAtTime(clock); // how we mark that the application is complete
-      recordDeviceType(device, application);
+      String userAgent = httpRequest.getHeader("User-Agent");
+      recordDeviceType(userAgent, application);
       applicationRepository.save(application);
       applicationStatusRepository.createOrUpdateApplicationType(application, SENDING);
       log.info("Invoking pageEventPublisher for application submission: " + application.getId());
@@ -697,21 +701,10 @@ public class PageController {
     }
   }
 
-  private void recordDeviceType(Device device, Application application) {
-    String deviceType = "unknown";
-    String platform = "unknown";
-    if (device != null) {
-      if (device.isNormal()) {
-        deviceType = "desktop";
-      } else if (device.isMobile()) {
-        deviceType = "mobile";
-      } else if (device.isTablet()) {
-        deviceType = "tablet";
-      }
-      platform = device.getDevicePlatform().name();
-    }
-    application.getApplicationData().setDevicePlatform(platform);
-    application.getApplicationData().setDeviceType(deviceType);
+  private void recordDeviceType(String userAgent, Application application) {
+    DeviceDetector.DeviceInfo deviceInfo = deviceDetector.detectDevice(userAgent);
+    application.getApplicationData().setDevicePlatform(deviceInfo.getPlatform());
+    application.getApplicationData().setDeviceType(deviceInfo.getDeviceType());
   }
 
   @PostMapping("/submit-feedback")

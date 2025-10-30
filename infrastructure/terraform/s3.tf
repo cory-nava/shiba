@@ -86,6 +86,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
     id     = "archive-old-documents"
     status = "Enabled"
 
+    filter {}
+
     transition {
       days          = var.document_lifecycle_glacier_days
       storage_class = "GLACIER"

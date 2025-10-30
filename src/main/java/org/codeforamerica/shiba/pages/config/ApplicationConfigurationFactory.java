@@ -24,8 +24,9 @@ public class ApplicationConfigurationFactory implements FactoryBean<ApplicationC
     loaderOptions.setMaxAliasesForCollections(Integer.MAX_VALUE);
     loaderOptions.setAllowRecursiveKeys(true);
 
-    Yaml yaml = new Yaml(new Constructor(ApplicationConfiguration.class), new Representer(),
-        new DumperOptions(), loaderOptions);
+    DumperOptions dumperOptions = new DumperOptions();
+    Yaml yaml = new Yaml(new Constructor(ApplicationConfiguration.class, loaderOptions),
+        new Representer(dumperOptions), dumperOptions, loaderOptions);
     ApplicationConfiguration appConfig = null;
     try {
       appConfig = yaml.load(classPathResource.getInputStream());

@@ -4,19 +4,18 @@
 resource "aws_lambda_function" "app" {
   function_name = local.full_name
   role          = aws_iam_role.lambda_exec.arn
-  handler       = "org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest"
+  handler       = "org.codeforamerica.shiba.StreamLambdaHandler::handleRequest"
   runtime       = "java17"
 
   memory_size = var.lambda_memory
   timeout     = var.lambda_timeout
 
   # Placeholder - will be updated by CI/CD
-  filename         = "${path.module}/placeholder-lambda.zip"
-  source_code_hash = filebase64sha256("${path.module}/placeholder-lambda.zip")
+  filename = "${path.module}/placeholder-lambda.zip"
 
-  # Increase ephemeral storage for Lambda (default is 512MB)
+  # Ephemeral storage (512MB is max when SnapStart is enabled)
   ephemeral_storage {
-    size = 2048 # 2GB for Spring Boot temp files
+    size = 512 # Maximum allowed with SnapStart
   }
 
   environment {
@@ -27,6 +26,7 @@ resource "aws_lambda_function" "app" {
 
       # Database connection
       DB_SECRET_ARN = aws_secretsmanager_secret.db_credentials.arn
+      DATABASE_URL  = "jdbc:postgresql://${aws_db_instance.main.endpoint}/shiba?user=${jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["username"]}&password=${urlencode(jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["password"])}"
 
       # S3 buckets
       S3_DOCUMENTS_BUCKET     = aws_s3_bucket.documents.id
@@ -35,8 +35,33 @@ resource "aws_lambda_function" "app" {
       # Redis
       REDIS_ENDPOINT = aws_elasticache_replication_group.session_cache.configuration_endpoint_address
 
-      # CloudFront
-      CLOUDFRONT_DOMAIN = aws_cloudfront_distribution.main.domain_name
+      # CloudFront (will be empty on first apply, can be updated later)
+      CLOUDFRONT_DOMAIN = ""
+
+      # Application secrets from Secrets Manager
+      ENCRYPTION_KEY          = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["encryption_key"]
+      MAILGUN_API_KEY         = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["mailgun_api_key"]
+      SMARTY_STREET_AUTHTOKEN = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["smarty_streets_auth_token"]
+      SMARTY_STREET_AUTHID    = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["smarty_streets_auth_id"]
+      MNIT_FILENET_USERNAME   = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["document_submission_username"]
+      MNIT_FILENET_PASSWORD   = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["document_submission_password"]
+
+      # Demo/placeholder values for OAuth (update these in production)
+      GOOGLE_CLIENT_ID       = "demo-client-id"
+      GOOGLE_CLIENT_SECRET   = "demo-client-secret"
+      AZURE_AD_CLIENT_ID     = "demo-azure-id"
+      AZURE_AD_CLIENT_SECRET = "demo-azure-secret"
+      AZURE_AD_TENANT_ID     = "demo-tenant-id"
+      MIXPANEL_API_KEY       = "demo-mixpanel-key"
+
+      # Application URL - use ALB for now
+      MNBENEFITS_ENV_URL = "http://${aws_lb.main.dns_name}"
+
+      # Keystore configuration
+      CLIENT_KEYSTORE            = "shiba-keystore.jks"
+      CLIENT_TRUSTSTORE          = "shiba-truststore.jks"
+      CLIENT_KEYSTORE_PASSWORD   = "changeit"
+      CLIENT_TRUSTSTORE_PASSWORD = "changeit"
 
       # Java options
       JAVA_TOOL_OPTIONS = "-XX:+TieredCompilation -XX:TieredStopAtLevel=1"
@@ -92,7 +117,7 @@ resource "aws_lambda_function_url" "app" {
 
   cors {
     allow_credentials = true
-    allow_origins     = ["https://${var.domain_name}"]
+    allow_origins     = var.domain_name != "" ? ["https://${var.domain_name}"] : ["*"]
     allow_methods     = ["*"]
     allow_headers     = ["*"]
     expose_headers    = ["*"]

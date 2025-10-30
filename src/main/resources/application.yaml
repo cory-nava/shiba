@@ -1,4 +1,7 @@
 spring:
+  main:
+    allow-bean-definition-overriding: true
+    web-application-type: servlet
   datasource:
     url: jdbc:postgresql://localhost:5432/shiba
     hikari:
@@ -57,8 +60,8 @@ client:
   truststore: src/main/resources/shiba-truststore.jks
 
 mnit-filenet:
-  username: ${MNIT-FILENET_USERNAME}
-  password: ${MNIT-FILENET_PASSWORD}
+  username: ${MNIT_FILENET_USERNAME}
+  password: ${MNIT_FILENET_PASSWORD}
   upload-url: https://test-svcs.dhs.mn.gov/WebServices/FileNet/ObjectService/SOAP
   # future endpoint for atompub/chemistry implementation:
   # url: https://test-svcs.dhs.mn.gov/fncmis/resources/Service
@@ -89,8 +92,6 @@ feature-flag:
   
 document-upload:
   max-files-uploaded: 20
-
-smarty-street-url: "https://us-street.api.smartystreets.com/street-address"
 
 encryption-key: ${ENCRYPTION_KEY}
 logging:
@@ -140,5 +141,9 @@ no-status-applications-resubmission:
   lockAtMostFor: 20m
 
 demo: false
+
+smarty-street-auth-id: ${SMARTY_STREET_AUTHID}
+smarty-street-auth-token: ${SMARTY_STREET_AUTHTOKEN}
+smarty-street-url: ${SMARTY_STREET_URL:https://us-street.api.smartystreets.com/street-address}
 
   # added this line to test the mnbenefits/shiba repo

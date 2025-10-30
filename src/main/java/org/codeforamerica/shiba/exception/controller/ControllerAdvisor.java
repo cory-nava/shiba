@@ -1,6 +1,6 @@
 package org.codeforamerica.shiba.exception.controller;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import org.apache.catalina.connector.ClientAbortException;
 import org.codeforamerica.shiba.pages.data.ApplicationData;
 import org.slf4j.MDC;

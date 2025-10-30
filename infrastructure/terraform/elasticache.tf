@@ -30,8 +30,8 @@ resource "aws_elasticache_parameter_group" "main" {
 }
 
 resource "aws_elasticache_replication_group" "session_cache" {
-  replication_group_id       = local.full_name
-  replication_group_description = "Redis cache for SHIBA sessions and config"
+  replication_group_id = local.full_name
+  description          = "Redis cache for SHIBA sessions and config"
 
   engine               = "redis"
   engine_version       = "7.0"
@@ -48,7 +48,6 @@ resource "aws_elasticache_replication_group" "session_cache" {
 
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  auth_token_enabled         = false # Set to true if you want Redis AUTH
 
   maintenance_window       = "sun:05:00-sun:06:00"
   snapshot_window          = "03:00-04:00"

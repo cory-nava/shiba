@@ -5,11 +5,12 @@ terraform {
   required_version = ">= 1.5"
 
   backend "s3" {
-    bucket         = "shiba-terraform-state"
+    bucket         = "shiba-tf-state-381684480739"
     key            = "shiba/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
     dynamodb_table = "shiba-terraform-locks"
+    profile        = "nava-proto-cory"
   }
 
   required_providers {
@@ -25,7 +26,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = "nava-proto-cory"
 
   default_tags {
     tags = {
@@ -39,8 +41,9 @@ provider "aws" {
 
 # CloudFront requires ACM certificates in us-east-1
 provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
+  alias   = "us_east_1"
+  region  = "us-east-1"
+  profile = "nava-proto-cory"
 
   default_tags {
     tags = {

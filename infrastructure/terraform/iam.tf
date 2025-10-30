@@ -226,6 +226,3 @@ resource "aws_iam_access_key" "github_actions" {
   count = var.create_cicd_user ? 1 : 0
   user  = aws_iam_user.github_actions[0].name
 }
-
-# Data sources
-data "aws_region" "current" {}

@@ -18,15 +18,19 @@ import java.time.Clock;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import javax.activation.DataHandler;
-import javax.mail.util.ByteArrayDataSource;
-import javax.xml.bind.JAXBElement;
+import jakarta.activation.DataHandler;
+import jakarta.activation.DataSource;
+import jakarta.xml.bind.JAXBElement;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import javax.xml.namespace.QName;
-import javax.xml.soap.SOAPElement;
-import javax.xml.soap.SOAPException;
-import javax.xml.soap.SOAPHeader;
-import javax.xml.soap.SOAPHeaderElement;
-import javax.xml.soap.SOAPMessage;
+import jakarta.xml.soap.SOAPElement;
+import jakarta.xml.soap.SOAPException;
+import jakarta.xml.soap.SOAPHeader;
+import jakarta.xml.soap.SOAPHeaderElement;
+import jakarta.xml.soap.SOAPMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.codeforamerica.shiba.application.ApplicationStatusRepository;
 import org.codeforamerica.shiba.application.FlowType;
@@ -268,7 +272,7 @@ public class FilenetWebServiceClient {
 
     CmisContentStreamType contentStream = new CmisContentStreamType();
     contentStream.setLength(BigInteger.ZERO);
-    contentStream.setStream(new DataHandler(new ByteArrayDataSource(applicationFile.getFileBytes(),
+    contentStream.setStream(new DataHandler(createByteArrayDataSource(applicationFile.getFileBytes(),
         mimeType)));
 
     ObjectFactory ob = new ObjectFactory();
@@ -298,5 +302,33 @@ public class FilenetWebServiceClient {
       }
     }
     return docDescription;
+  }
+
+  /**
+   * Creates a DataSource from a byte array for use with DataHandler.
+   * This replaces the javax.mail.util.ByteArrayDataSource which is not available in Jakarta.
+   */
+  private DataSource createByteArrayDataSource(byte[] data, String mimeType) {
+    return new DataSource() {
+      @Override
+      public InputStream getInputStream() throws IOException {
+        return new ByteArrayInputStream(data);
+      }
+
+      @Override
+      public OutputStream getOutputStream() throws IOException {
+        throw new UnsupportedOperationException("Read-only DataSource");
+      }
+
+      @Override
+      public String getContentType() {
+        return mimeType;
+      }
+
+      @Override
+      public String getName() {
+        return "ByteArrayDataSource";
+      }
+    };
   }
 }

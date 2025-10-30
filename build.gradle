@@ -1,6 +1,6 @@
 plugins {
-    id("org.springframework.boot") version "2.7.1"
-    id("io.spring.dependency-management") version "1.0.12.RELEASE"
+    id("org.springframework.boot") version "3.2.11"
+    id("io.spring.dependency-management") version "1.1.6"
     id("java")
     id("com.github.jk1.dependency-license-report") version "2.1"
     id("com.gorylenko.gradle-git-properties") version "2.4.1"
@@ -9,6 +9,13 @@ plugins {
 group = "org.codeforamerica"
 version = "0.0.1-SNAPSHOT"
 sourceCompatibility = "17"
+targetCompatibility = "17"
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
 
 configurations {
     compileOnly {
@@ -67,19 +74,13 @@ task genJaxbFilenet {
 
 dependencyManagement {
     imports {
-        mavenBom("org.springframework.session:spring-session-bom:2021.2.0")
+        mavenBom("org.springframework.session:spring-session-bom:3.2.4")
     }
 }
 
 dependencies {
-    modules {
-        module("javax.activation:activation") {
-            replacedBy("jakarta.activation:jakarta.activation-api", "Use jakarta instead of javax")
-        }
-        module("org.apache.commons:commons-email") {
-            replacedBy("com.sun.mail:jakarta.mail", "Use jakarta instead of apache")
-        }
-    }
+    // Spring Boot 3 uses Jakarta EE 9+, so javax.* is already replaced with jakarta.*
+    // No need for explicit module replacements
 
     implementation(files(genJaxbFilenet.classesDir).builtBy(genJaxbFilenet))
     jaxb(
@@ -89,9 +90,9 @@ dependencies {
     )
 
     // AWS Lambda dependencies
-    implementation("com.amazonaws:aws-lambda-java-core:1.2.2")
-    implementation("com.amazonaws:aws-lambda-java-events:3.11.1")
-    implementation("org.springframework.cloud:spring-cloud-function-adapter-aws:3.2.5")
+    implementation("com.amazonaws:aws-lambda-java-core:1.2.3")
+    implementation("com.amazonaws:aws-lambda-java-events:3.14.0")
+    implementation("com.amazonaws.serverless:aws-serverless-java-container-springboot3:2.0.3")
 
     // AWS SDK for S3, Secrets Manager, etc.
     implementation platform("software.amazon.awssdk:bom:2.20.26")
@@ -105,9 +106,9 @@ dependencies {
     annotationProcessor("org.projectlombok:lombok")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 
-	implementation("org.springframework.mobile:spring-mobile-starter:2.0.0.M3")
+    // spring-mobile is discontinued, device detection can be done via UserAgent parsing
     implementation("org.springframework.session:spring-session-jdbc")
-    implementation("io.sentry:sentry-spring-boot-starter:6.1.4")
+    implementation("io.sentry:sentry-spring-boot-starter-jakarta:7.18.1")
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
     implementation("org.apache.logging.log4j:log4j-api:2.18.0")
     implementation("org.apache.logging.log4j:log4j-to-slf4j:2.18.0")
@@ -123,28 +124,29 @@ dependencies {
     implementation("org.apache.pdfbox:pdfbox:2.0.26")
     implementation("org.apache.commons:commons-lang3")
     implementation("org.apache.commons:commons-text:1.9")
+    implementation("commons-codec:commons-codec:1.15")
     implementation("org.jetbrains:annotations:23.0.0")
     implementation("commons-validator:commons-validator:1.7")
     implementation("org.springframework.boot:spring-boot-starter-data-jdbc")
-    implementation("org.apache.httpcomponents:httpclient")
-    implementation("io.sentry:sentry-logback:6.1.4")
+    implementation("org.apache.httpcomponents.client5:httpclient5:5.3")
+    implementation("io.sentry:sentry-logback:7.18.1")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
     implementation("com.google.crypto.tink:tink:1.6.1")
-    implementation("org.flywaydb:flyway-core:8.5.13")
+    implementation("org.flywaydb:flyway-core:10.21.0")
+    implementation("org.flywaydb:flyway-database-postgresql:10.21.0")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("com.mixpanel:mixpanel-java:1.5.0")
     implementation("org.springframework.boot:spring-boot-starter-validation")
-    implementation("com.sun.activation:jakarta.activation")
-    implementation("org.apache.commons:commons-email:1.5")
+    // jakarta.activation is now included in Spring Boot 3
+    implementation("org.apache.commons:commons-email:1.6.0")
     implementation("org.springframework:spring-aspects")
     implementation("com.google.code.findbugs:jsr305:3.0.2")
     implementation("org.springframework.retry:spring-retry")
     implementation("ch.qos.logback.contrib:logback-json-classic:0.1.5")
     implementation("ch.qos.logback.contrib:logback-jackson:0.1.5")
-    implementation("ch.qos.logback:logback-core:1.2.11")
-    implementation("ch.qos.logback:logback-classic:1.2.0")
-    implementation("net.logstash.logback:logstash-logback-encoder:7.2")
+    // Logback core and classic are provided by Spring Boot 3 (compatible with SLF4J 2.0)
+    implementation("net.logstash.logback:logstash-logback-encoder:8.0")
     implementation("net.javacrumbs.shedlock:shedlock-spring:4.38.0")
     implementation("net.javacrumbs.shedlock:shedlock-provider-jdbc-template:4.38.0")
     implementation("org.apache.chemistry.opencmis:chemistry-opencmis-client-api:1.1.0")
@@ -169,7 +171,7 @@ dependencies {
     testImplementation("com.h2database:h2")
     testImplementation("org.awaitility:awaitility")
     testImplementation("com.github.tomakehurst:wiremock-standalone:2.27.2")
-    testImplementation("org.mockito:mockito-inline")
+    testImplementation("org.mockito:mockito-inline:5.2.0")
     testImplementation("io.github.bonigarcia:webdrivermanager:5.2.1")
     testImplementation("org.springframework.ws:spring-ws-test")
     testImplementation("org.springframework.security:spring-security-test")
@@ -308,14 +310,21 @@ jar {
     enabled = false
 }
 
+// Configure bootJar to handle duplicate files
+bootJar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 // Task to build Lambda deployment package
 task buildLambda(type: Zip) {
-    dependsOn build
+    dependsOn build, genJaxbFilenet
     archiveFileName = "shiba-lambda-${version}.zip"
     destinationDirectory = file("$buildDir/distributions")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 
     from(compileJava)
     from(processResources)
+    from("$buildDir/classes/jaxb") // Include JAXB-generated Filenet classes
 
     into('lib') {
         from(configurations.runtimeClasspath)

@@ -65,9 +65,6 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.MessageSource;
 import org.springframework.http.MediaType;
-import org.springframework.mobile.device.Device;
-import org.springframework.mobile.device.DevicePlatform;
-import org.springframework.mobile.device.DeviceType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
@@ -105,8 +102,6 @@ class PageControllerTest {
   private RoutingDecisionService routingDecisionService;
   @SpyBean
   private DocumentRepository documentRepository;
-  @SpyBean
-  private Device device;
   @MockBean
   private EligibilityListBuilder listBuilder;
 
@@ -143,11 +138,9 @@ class PageControllerTest {
     applicationData.setStartTimeOnce(Instant.now());
     when(clock.instant())
         .thenReturn(LocalDateTime.of(2020, 1, 1, 10, 10).atOffset(ZoneOffset.UTC).toInstant());
-    Map<String, Object> deviceAttribute = new HashMap<>();
-    deviceAttribute.put("device", device);
     MockHttpServletRequestBuilder request = post("/submit")
-        .flashAttrs(deviceAttribute)
         .contentType(MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+        .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Mobile Safari/537.36")
         .param("foo[]", "some value");
     mockMvc.perform(request).andExpect(redirectedUrl("/pages/secondPage/navigation"));
 
@@ -155,8 +148,8 @@ class PageControllerTest {
     assertThat(secondPage.get("foo").getValue()).contains("some value");
     String devicePlatform = applicationData.getDevicePlatform();
     String deviceType = applicationData.getDeviceType();
-    assertThat(devicePlatform).isEqualToIgnoringCase(DevicePlatform.ANDROID.toString());
-    assertThat(deviceType).isEqualToIgnoringCase(DeviceType.MOBILE.toString());
+    assertThat(devicePlatform).isEqualToIgnoringCase("ANDROID");
+    assertThat(deviceType).isEqualToIgnoringCase("mobile");
   }
 
   @Test
@@ -175,11 +168,9 @@ class PageControllerTest {
     when(applicationFactory.newApplication(eq(applicationData))).thenReturn(application);
     String sessionId = "someSessionId";
     MockHttpSession session = new MockHttpSession(null, sessionId);
-    Map<String, Object> deviceAttribute = new HashMap<>();
-    deviceAttribute.put("device", device);
     mockMvc.perform(post("/submit")
-        .flashAttrs(deviceAttribute)
         .session(session)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .param("foo[]", "some value")
         .contentType(MediaType.APPLICATION_FORM_URLENCODED_VALUE));
 
@@ -303,10 +294,8 @@ class PageControllerTest {
     when(applicationFactory.newApplication(applicationData)).thenReturn(application);
 
     assertThat(application.getTimeToComplete()).isEqualTo(null);
-    Map<String, Object> deviceAttribute = new HashMap<>();
-    deviceAttribute.put("device", device);
     mockMvc.perform(post("/submit")
-        .flashAttrs(deviceAttribute)
+        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)")
         .param("foo[]", "some value")
         .contentType(MediaType.APPLICATION_FORM_URLENCODED_VALUE));
 

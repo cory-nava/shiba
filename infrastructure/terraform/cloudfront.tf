@@ -1,5 +1,11 @@
 # CloudFront Distribution for CDN and Global Delivery
 
+# Random password for CloudFront origin verification (must be defined first)
+resource "random_password" "cloudfront_secret" {
+  length  = 32
+  special = true
+}
+
 # Origin Access Control for S3
 resource "aws_cloudfront_origin_access_control" "static_assets" {
   name                              = "${local.full_name}-static-assets-oac"
@@ -134,9 +140,9 @@ resource "aws_cloudfront_distribution" "main" {
     compress               = true
   }
 
-  # Images behavior
+  # Images behavior - use /images/* path instead
   ordered_cache_behavior {
-    path_pattern     = "*.{jpg,jpeg,png,gif,ico,svg,webp}"
+    path_pattern     = "/images/*"
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
     target_origin_id = "s3-static"
@@ -159,7 +165,7 @@ resource "aws_cloudfront_distribution" "main" {
 
   # Fonts behavior
   ordered_cache_behavior {
-    path_pattern     = "*.{ttf,woff,woff2,eot,otf}"
+    path_pattern     = "/fonts/*"
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
     target_origin_id = "s3-static"
@@ -244,12 +250,6 @@ resource "aws_cloudfront_distribution" "main" {
       Name = "${local.full_name}-cdn"
     }
   )
-}
-
-# Random password for CloudFront origin verification
-resource "random_password" "cloudfront_secret" {
-  length  = 32
-  special = true
 }
 
 # ACM Certificate for custom domain (must be in us-east-1)

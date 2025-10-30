@@ -2,21 +2,20 @@ package org.codeforamerica.shiba.configurations;
 
 import java.io.IOException;
 import java.util.List;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.session.InvalidSessionStrategy;
 import org.springframework.security.web.session.SessionInformationExpiredEvent;
 import org.springframework.security.web.session.SessionInformationExpiredStrategy;
@@ -27,7 +26,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Configuration
 @EnableWebSecurity
-public class SecurityConfiguration extends WebSecurityConfigurerAdapter {
+public class SecurityConfiguration {
 
   @Autowired
   private ShibaInvalidSessionStrategy shibaInvalidSessionStrategy;
@@ -44,28 +43,29 @@ public class SecurityConfiguration extends WebSecurityConfigurerAdapter {
       "allison.wehlage@state.mn.us"
   );
 
-  @Override
-  protected AuthenticationManager authenticationManager() throws Exception {
-    return super.authenticationManager();
-  }
-
-
-  @Override
-  protected void configure(HttpSecurity http) throws Exception {
-    http.authorizeRequests(r ->
-            r.antMatchers(
+  @Bean
+  public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    http.authorizeHttpRequests(r ->
+            r.requestMatchers(
                     "/download/??????????",
                     "/resend-confirmation-email/??????????")
-                .access("isAuthenticated() and @emailBasedAccessDecider.check(authentication)"))
-        .oauth2Login();
+                .access((authentication, context) ->
+                    new org.springframework.security.authorization.AuthorizationDecision(
+                        authentication.get().isAuthenticated() &&
+                        emailBasedAccessDecider().check(authentication.get()))))
+        .oauth2Login(oauth2 -> {});
 
-    http.headers()
-        .httpStrictTransportSecurity()
-        .includeSubDomains(true)
-        .maxAgeInSeconds(31536000);
+    http.headers(headers -> headers
+        .httpStrictTransportSecurity(hsts -> hsts
+            .includeSubDomains(true)
+            .maxAgeInSeconds(31536000)));
 
-    http.sessionManagement(session -> session.invalidSessionStrategy(this.shibaInvalidSessionStrategy));
-    http.sessionManagement().sessionConcurrency(concurrency -> concurrency.expiredSessionStrategy(this.shibaInvalidSessionStrategy));
+    http.sessionManagement(session -> session
+        .invalidSessionStrategy(this.shibaInvalidSessionStrategy)
+        .sessionConcurrency(concurrency -> concurrency
+            .expiredSessionStrategy(this.shibaInvalidSessionStrategy)));
+
+    return http.build();
   }
 
   @Bean
