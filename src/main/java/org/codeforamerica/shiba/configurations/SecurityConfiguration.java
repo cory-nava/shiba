@@ -16,11 +16,13 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.servlet.util.matcher.MvcRequestMatcher;
 import org.springframework.security.web.session.InvalidSessionStrategy;
 import org.springframework.security.web.session.SessionInformationExpiredEvent;
 import org.springframework.security.web.session.SessionInformationExpiredStrategy;
 import org.springframework.security.web.session.SimpleRedirectInvalidSessionStrategy;
 import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.handler.HandlerMappingIntrospector;
 
 
 @Slf4j
@@ -44,11 +46,14 @@ public class SecurityConfiguration {
   );
 
   @Bean
-  public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+  public SecurityFilterChain filterChain(HttpSecurity http, HandlerMappingIntrospector introspector) throws Exception {
+    // Create MvcRequestMatcher.Builder for Spring MVC endpoints with explicit servlet path
+    MvcRequestMatcher.Builder mvcMatcherBuilder = new MvcRequestMatcher.Builder(introspector).servletPath("/");
+
     http.authorizeHttpRequests(r ->
             r.requestMatchers(
-                    "/download/??????????",
-                    "/resend-confirmation-email/??????????")
+                    mvcMatcherBuilder.pattern("/download/??????????"),
+                    mvcMatcherBuilder.pattern("/resend-confirmation-email/??????????"))
                 .access((authentication, context) ->
                     new org.springframework.security.authorization.AuthorizationDecision(
                         authentication.get().isAuthenticated() &&

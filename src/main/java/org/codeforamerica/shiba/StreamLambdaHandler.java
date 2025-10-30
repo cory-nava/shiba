@@ -4,6 +4,7 @@ import com.amazonaws.serverless.exceptions.ContainerInitializationException;
 import com.amazonaws.serverless.proxy.model.AwsProxyRequest;
 import com.amazonaws.serverless.proxy.model.AwsProxyResponse;
 import com.amazonaws.serverless.proxy.spring.SpringBootLambdaContainerHandler;
+import com.amazonaws.serverless.proxy.spring.SpringBootProxyHandlerBuilder;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
 
@@ -21,7 +22,12 @@ public class StreamLambdaHandler implements RequestStreamHandler {
 
     static {
         try {
-            handler = SpringBootLambdaContainerHandler.getAwsProxyHandler(ShibaApplication.class);
+            // Use SpringBootProxyHandlerBuilder to force servlet mode even with WebFlux on classpath
+            handler = new SpringBootProxyHandlerBuilder<AwsProxyRequest>()
+                .defaultProxy()
+                .servletApplication()
+                .springBootApplication(ShibaApplication.class)
+                .buildAndInitialize();
             // Enable response compression
             handler.stripBasePath("");
         } catch (ContainerInitializationException e) {
