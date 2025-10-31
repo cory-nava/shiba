@@ -1,6 +1,7 @@
 package org.codeforamerica.shiba;
 
 import com.amazonaws.serverless.exceptions.ContainerInitializationException;
+import com.amazonaws.serverless.proxy.internal.LambdaContainerHandler;
 import com.amazonaws.serverless.proxy.model.AwsProxyRequest;
 import com.amazonaws.serverless.proxy.model.AwsProxyResponse;
 import com.amazonaws.serverless.proxy.spring.SpringBootLambdaContainerHandler;
@@ -22,11 +23,15 @@ public class StreamLambdaHandler implements RequestStreamHandler {
 
     static {
         try {
+            // Set initialization timeout to 60 seconds (from default 20s) for cold starts
+            LambdaContainerHandler.getContainerConfig().setInitializationTimeout(60_000);
+
             // Use SpringBootProxyHandlerBuilder to force servlet mode even with WebFlux on classpath
             handler = new SpringBootProxyHandlerBuilder<AwsProxyRequest>()
                 .defaultProxy()
                 .servletApplication()
                 .springBootApplication(ShibaApplication.class)
+                .asyncInit() // Use async initialization for better cold start handling
                 .buildAndInitialize();
             // Enable response compression
             handler.stripBasePath("");

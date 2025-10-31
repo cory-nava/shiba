@@ -19,20 +19,21 @@ resource "aws_cloudfront_origin_access_control" "static_assets" {
 resource "aws_cloudfront_distribution" "main" {
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "SHIBA ${var.environment} - Lambda + S3"
+  comment             = "SHIBA ${var.environment} - ALB + S3"
   default_root_object = ""
   price_class         = var.environment == "production" ? "PriceClass_All" : "PriceClass_100"
   aliases             = var.domain_name != "" ? [var.domain_name] : []
 
-  # Origin 1: Lambda Function URL (for dynamic content)
+  # Origin 1: Application Load Balancer (for dynamic content)
+  # Note: ALB currently only has HTTP listener on port 80
   origin {
-    domain_name = replace(replace(aws_lambda_function_url.app.function_url, "https://", ""), "/", "")
-    origin_id   = "lambda"
+    domain_name = aws_lb.main.dns_name
+    origin_id   = "alb"
 
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "https-only"
+      origin_protocol_policy = "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
 
@@ -49,11 +50,11 @@ resource "aws_cloudfront_distribution" "main" {
     origin_access_control_id = aws_cloudfront_origin_access_control.static_assets.id
   }
 
-  # Default behavior: Route to Lambda
+  # Default behavior: Route to ALB
   default_cache_behavior {
     allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods   = ["GET", "HEAD", "OPTIONS"]
-    target_origin_id = "lambda"
+    target_origin_id = "alb"
 
     forwarded_values {
       query_string = true

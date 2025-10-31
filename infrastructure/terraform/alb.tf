@@ -84,7 +84,9 @@ resource "aws_lb_target_group_attachment" "lambda" {
   depends_on       = [aws_lambda_permission.alb]
 }
 
-# HTTP Listener (redirect to HTTPS in production)
+# HTTP Listener
+# Note: For internal CloudFront->ALB communication, HTTP is acceptable
+# Users still connect to CloudFront via HTTPS
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"

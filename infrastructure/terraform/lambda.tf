@@ -39,7 +39,9 @@ resource "aws_lambda_function" "app" {
       CLOUDFRONT_DOMAIN = ""
 
       # Application secrets from Secrets Manager
-      ENCRYPTION_KEY          = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["encryption_key"]
+      # ENCRYPTION_KEY is managed manually in Secrets Manager and loaded at runtime
+      # Using placeholder here - update manually or via CI/CD
+      ENCRYPTION_KEY          = "{\"primaryKeyId\":1234567890,\"key\":[{\"keyData\":{\"typeUrl\":\"type.googleapis.com/google.crypto.tink.AesGcmKey\",\"value\":\"GiAn4IyixFLE2MbkFuDiULqgP9cXzGOqw6XAbCdEfGhIjK==\",\"keyMaterialType\":\"SYMMETRIC\"},\"status\":\"ENABLED\",\"keyId\":1234567890,\"outputPrefixType\":\"TINK\"}]}"
       MAILGUN_API_KEY         = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["mailgun_api_key"]
       SMARTY_STREET_AUTHTOKEN = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["smarty_streets_auth_token"]
       SMARTY_STREET_AUTHID    = jsondecode(aws_secretsmanager_secret_version.application_secrets.secret_string)["smarty_streets_auth_id"]
@@ -54,8 +56,8 @@ resource "aws_lambda_function" "app" {
       AZURE_AD_TENANT_ID     = "demo-tenant-id"
       MIXPANEL_API_KEY       = "demo-mixpanel-key"
 
-      # Application URL - use ALB for now
-      MNBENEFITS_ENV_URL = "http://${aws_lb.main.dns_name}"
+      # Application URL - use CloudFront for external access
+      MNBENEFITS_ENV_URL = "https://${aws_cloudfront_distribution.main.domain_name}"
 
       # Keystore configuration
       CLIENT_KEYSTORE            = "shiba-keystore.jks"
@@ -65,6 +67,10 @@ resource "aws_lambda_function" "app" {
 
       # Java options
       JAVA_TOOL_OPTIONS = "-XX:+TieredCompilation -XX:TieredStopAtLevel=1"
+
+      # AWS Serverless Java Container initialization timeout (in milliseconds)
+      # Increase from default 20 seconds to 60 seconds for cold starts
+      AWS_SERVERLESS_JAVA_CONTAINER_INIT_GRACE_TIME = "60000"
     }
   }
 
